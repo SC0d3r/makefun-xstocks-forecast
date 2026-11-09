@@ -10,6 +10,10 @@ const DRAWS = 200_000;
 const SMOOTHING = 0.5;
 const SEED = 20_261_109;
 const MICRO = 1_000_000;
+const MIX_CORE = 0.92;
+const MIX_WIDE = 2.6;
+const PARTIAL_DAY_WEIGHT = 0.9;
+const WEEKEND_VOL_FACTOR = 1.1;
 
 const PRIORS: Record<string, number> = {
   AAPLX: 0.0139,
@@ -181,7 +185,7 @@ function dayForecasts(forecastVols: number[]): DayForecast[] {
       for (let i = 0; i < names; i++) {
         const last = bars[i]![bars[i]!.length - 1];
         if (closeBar[i] !== undefined && last !== undefined && last.t > closeTime) {
-          mean[i] = 0.9 * Math.log(Number(last.c) / Number(closeBar[i]!.c));
+          mean[i] = PARTIAL_DAY_WEIGHT * Math.log(Number(last.c) / Number(closeBar[i]!.c));
           const knownHours = clamp(Math.round((last.t - closeTime) / HOUR_MS), 0, 24);
           sd[i] = forecastVols[i]! * Math.sqrt(Math.max(0, 1 - knownHours / DAY_VARIANCE_FACTOR));
         }
@@ -189,7 +193,7 @@ function dayForecasts(forecastVols: number[]): DayForecast[] {
     }
 
     if (Date.parse(`${day.date}T00:00:00Z`) - Date.parse(`${day.previous}T00:00:00Z`) > 24 * HOUR_MS + 1000) {
-      for (let i = 0; i < names; i++) sd[i] = sd[i]! * 1.1;
+      for (let i = 0; i < names; i++) sd[i] = sd[i]! * WEEKEND_VOL_FACTOR;
     }
 
     return { date: day.date, mean, sd };
@@ -207,8 +211,8 @@ function sizeRows(forecast: DayForecast): SizeRow[] {
       const l = lo === -Infinity ? -Infinity : Math.log1p(lo);
       const h = hi === Infinity ? Infinity : Math.log1p(hi);
       const core = phi((h - mean) / sd) - phi((l - mean) / sd);
-      const wide = phi((h - mean) / (2.6 * sd)) - phi((l - mean) / (2.6 * sd));
-      const units = micro(0.92 * core + 0.08 * wide);
+      const wide = phi((h - mean) / (MIX_WIDE * sd)) - phi((l - mean) / (MIX_WIDE * sd));
+      const units = micro(MIX_CORE * core + (1 - MIX_CORE) * wide);
       if (units > 0) rows.push({ symbol, bin, p: units / MICRO });
     }
   });
@@ -216,15 +220,19 @@ function sizeRows(forecast: DayForecast): SizeRow[] {
 }
 
 function orderForecast(forecasts: DayForecast[]): Array<{ probabilities: ProbabilityRow[]; order: string[] }> {
+  const component = uniforms(SEED ^ 0x9e3779b9);
   const gauss = normals(uniforms(SEED));
   return forecasts.map((forecast) => {
     const counts = Array.from({ length: places }, () => new Array<number>(names).fill(0));
     const draw = new Array<number>(names).fill(0);
     const index = symbols.map((_, i) => i);
 
+    // Draw order: for each draw, for each name one uniform for the component
+    // choice, then one normal from the Box-Muller generator. Values are
+    // mean + sd * scale * z, sorted descending with ties by ascending index.
     for (let d = 0; d < DRAWS; d++) {
       for (let i = 0; i < names; i++) {
-        const scale = gauss() < 0.08 ? 2.6 : 1;
+        const scale = component() < 1 - MIX_CORE ? MIX_WIDE : 1;
         draw[i] = forecast.mean[i]! + forecast.sd[i]! * scale * gauss();
       }
       index.sort((a, b) => draw[b]! - draw[a]! || a - b);
@@ -255,7 +263,7 @@ function orderForecast(forecasts: DayForecast[]): Array<{ probabilities: Probabi
           );
           const nextMask = mask | (1 << i);
           const candidate = dp[mask]! + expected;
-          if (candidate < dp[nextMask]! || (candidate === dp[nextMask] && (choice[nextMask] === -1 || i < choice[nextMask]!))) {
+          if (candidate < dp[nextMask]! - 1e-12) {
             dp[nextMask] = candidate;
             choice[nextMask] = i;
           }
