@@ -12,6 +12,8 @@ const SEED = 20_261_109;
 const MICRO = 1_000_000;
 const MIX_CORE = 0.92;
 const MIX_WIDE = 2.6;
+const MARKET_LOADING = 0.53;
+const IDIO_LOADING = Math.sqrt(1 - MARKET_LOADING * MARKET_LOADING);
 const PARTIAL_DAY_WEIGHT = 1.0;
 const WEEKEND_VOL_FACTOR = 1.1;
 
@@ -227,13 +229,18 @@ function orderForecast(forecasts: DayForecast[]): Array<{ probabilities: Probabi
     const draw = new Array<number>(names).fill(0);
     const index = symbols.map((_, i) => i);
 
-    // Draw order: for each draw, for each name one uniform for the component
-    // choice, then one normal from the Box-Muller generator. Values are
-    // mean + sd * scale * z, sorted descending with ties by ascending index.
+    // Draw order: for each draw one common market normal, then for each name
+    // one uniform for the component choice and one idiosyncratic normal. Each
+    // name's shock is 0.53 * market + sqrt(1 - 0.53^2) * idio, so returns share
+    // the market factor the house measured (0.53 loading, 0.279 mean pairwise
+    // correlation on the 60 days to 2026-11-06) instead of moving
+    // independently. Values are mean + sd * scale * shock, sorted descending
+    // with ties by ascending index.
     for (let d = 0; d < DRAWS; d++) {
+      const market = gauss();
       for (let i = 0; i < names; i++) {
         const scale = component() < 1 - MIX_CORE ? MIX_WIDE : 1;
-        draw[i] = forecast.mean[i]! + forecast.sd[i]! * scale * gauss();
+        draw[i] = forecast.mean[i]! + forecast.sd[i]! * scale * (MARKET_LOADING * market + IDIO_LOADING * gauss());
       }
       index.sort((a, b) => draw[b]! - draw[a]! || a - b);
       for (let k = 0; k < places; k++) counts[k]![index[k]!]! += 1;
