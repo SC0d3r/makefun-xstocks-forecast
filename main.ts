@@ -5,14 +5,14 @@ const INPUT_DIR = process.env.MAKEFUN_INPUT_DIR ?? '/input';
 const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 const HOUR_MS = 3_600_000;
-const DAY_VARIANCE_FACTOR = 76;
+const DAY_VARIANCE_FACTOR = 24;
 const DRAWS = 200_000;
 const SMOOTHING = 0.5;
 const SEED = 20_261_109;
 const MICRO = 1_000_000;
 const MIX_CORE = 0.92;
 const MIX_WIDE = 2.6;
-const PARTIAL_DAY_WEIGHT = 0.9;
+const PARTIAL_DAY_WEIGHT = 1.0;
 const WEEKEND_VOL_FACTOR = 1.1;
 
 const PRIORS: Record<string, number> = {
@@ -121,7 +121,7 @@ function forecastVolumes(sampleVols: number[]): number[] {
   const d = sampleVols.map((vol, i) => 2 * Math.log(vol / priors[i]!));
   const common = d.reduce((sum, value) => sum + value, 0) / names;
   return priors.map((prior, i) => clamp(
-    prior * Math.exp(0.5 * clamp(0.65 * common + 0.30 * (d[i]! - common), -1.5, 1.5)),
+    prior * Math.exp(0.5 * clamp(0.30 * common + 0.15 * (d[i]! - common), -1.5, 1.5)),
     0.005,
     0.5,
   ));
